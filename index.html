@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Site İçi Arama Botu</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050508; --surface: rgba(15, 15, 22, 0.8); --border: rgba(255,255,255,0.08);
+    --purple: #a855f7; --pink: #ec4899; --text: #fff; --muted: #888899;
+    --green: #10b981;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; cursor: none; }
+  body {
+    background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif;
+    min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px;
+    background-image: radial-gradient(circle at 50% 50%, rgba(168,85,247,0.05), transparent 50%);
+  }
+  .cursor { position: fixed; top:0; left:0; width:10px; height:10px; background:var(--purple); border-radius:50%; pointer-events:none; z-index:99999; transform:translate(-50%,-50%); box-shadow:0 0 10px var(--purple); }
+  
+  .container {
+    width: 100%; max-width: 900px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 24px; backdrop-filter: blur(20px);
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.8);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  
+  .header {
+    padding: 24px; text-align: center; border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.3);
+  }
+  .header h1 { font-family: 'Space Grotesk', sans-serif; font-size: 1.8rem; background: linear-gradient(135deg, #fff, var(--purple)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .header p { color: var(--muted); font-size: 0.9rem; margin-top: 5px; }
+
+  .search-panel { padding: 30px; display: flex; flex-direction: column; gap: 15px; }
+  
+  .input-group { display: flex; flex-direction: column; gap: 8px; }
+  .input-group label { font-size: 0.8rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .input-group input { 
+    padding: 16px; background: rgba(0,0,0,0.4); border: 1px solid var(--border);
+    border-radius: 12px; color: #fff; font-family: 'Inter', sans-serif; font-size: 1rem; outline: none; transition: 0.3s;
+  }
+  .input-group input:focus { border-color: var(--purple); background: rgba(168,85,247,0.05); }
+  
+  .btn-search {
+    margin-top: 10px; padding: 18px; background: var(--purple); color: #fff; 
+    border: none; border-radius: 12px; font-family: 'Space Grotesk', sans-serif; 
+    font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: 0.3s;
+    display: flex; justify-content: center; align-items: center; gap: 10px;
+  }
+  .btn-search:hover { background: var(--pink); transform: translateY(-2px); box-shadow: 0 10px 20px -10px rgba(236,72,153,0.5); }
+  .btn-search:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  /* Sonuç Alanı */
+  .results-area {
+    border-top: 1px solid var(--border); padding: 30px;
+    max-height: 400px; overflow-y: auto; display: none;
+  }
+  .results-area.active { display: block; }
+  .results-area::-webkit-scrollbar { width: 6px; }
+  .results-area::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.3); border-radius: 10px; }
+
+  .result-item {
+    background: rgba(255,255,255,0.02); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 15px;
+  }
+  .result-item h3 { color: var(--purple); font-size: 1rem; margin-bottom: 8px; }
+  .result-snippet { color: #ccc; font-size: 0.9rem; line-height: 1.6; }
+  .result-snippet mark { background: var(--purple); color: #fff; padding: 0 4px; border-radius: 4px; font-weight: bold; }
+  
+  .status-msg { text-align: center; color: var(--muted); font-size: 0.9rem; padding: 20px; }
+
+</style>
+</head>
+<body>
+
+  <div class="cursor" id="cursor"></div>
+
+  <div class="container">
+    <div class="header">
+      <h1>Site İçi Arama Botu</h1>
+      <p>Hedef siteye GET isteği atar, içinde anahtar kelimeyi arar.</p>
+    </div>
+
+    <div class="search-panel">
+      <div class="input-group">
+        <label>Hedef Site (URL)</label>
+        <input type="text" id="targetUrl" placeholder="örn: https://tr.wikipedia.org/wiki/Türkiye" value="https://tr.wikipedia.org/wiki/Yapay_zeka">
+      </div>
+      <div class="input-group">
+        <label>Aranacak Kelime</label>
+        <input type="text" id="keyword" placeholder="örn: yapay zeka, tarih, bilim" value="yapay zeka">
+      </div>
+      <button class="btn-search" id="searchBtn" onclick="startSearch()">Ara ve Bul</button>
+    </div>
+
+    <div class="results-area" id="resultsArea">
+      <!-- Sonuçlar buraya gelecek -->
+    </div>
+  </div>
+
+  <script>
+    // CORS Proxy (Güvenlik duvarını aşmak için)
+    const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+
+    const cursor = document.getElementById('cursor');
+    document.addEventListener('mousemove', (e) => {
+      cursor.style.left = e.clientX + 'px';
+      cursor.style.top = e.clientY + 'px';
+    });
+
+    async function startSearch() {
+      const targetUrl = document.getElementById('targetUrl').value.trim();
+      const keyword = document.getElementById('keyword').value.trim().toLowerCase();
+      const resultsArea = document.getElementById('resultsArea');
+      const searchBtn = document.getElementById('searchBtn');
+
+      if (!targetUrl || !keyword) {
+        alert("Lütfen URL ve Kelime alanlarını doldur!");
+        return;
+      }
+
+      // Arayüzü temizle ve yükleniyor göster
+      resultsArea.classList.add('active');
+      resultsArea.innerHTML = `<div class="status-msg">GET isteği atılıyor ve site taranıyor... Lütfen bekle.</div>`;
+      searchBtn.disabled = true;
+      searchBtn.innerText = "Taranıyor...";
+
+      try {
+        // Proxy üzerinden hedefe GET isteği at
+        const response = await fetch(CORS_PROXY + encodeURIComponent(targetUrl));
+        const htmlText = await response.text();
+
+        // HTML'i bir DOM objesine çevir ki metinleri ayıklayabilelim
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlText, 'text/html');
+        
+        // Script ve style etiketlerini kaldır (sadece metin kalsın)
+        const scripts = doc.querySelectorAll('script, style, noscript');
+        scripts.forEach(s => s.remove());
+
+        // Tüm metni al
+        const bodyText = doc.body.innerText || doc.body.textContent;
+        
+        // Metni cümlelere böl
+        const sentences = bodyText.split(/(?<=[.!?])\s+|\n+/);
+        
+        let foundResults = [];
+
+        // Cümleleri filtrele
+        sentences.forEach(sentence => {
+          const cleanSentence = sentence.trim();
+          if (cleanSentence.toLowerCase().includes(keyword) && cleanSentence.length > 30 && cleanSentence.length < 500) {
+            foundResults.push(cleanSentence);
+          }
+        });
+
+        // Sonuçları göster
+        resultsArea.innerHTML = ''; // Temizle
+
+        if (foundResults.length > 0) {
+          // Aynı cümlelerin tekrarını önle ve ilk 10 tanesini göster
+          const uniqueResults = [...new Set(foundResults)].slice(0, 10);
+          
+          resultsArea.innerHTML += `<div class="status-msg" style="color:var(--green); margin-bottom:15px;"><strong>${uniqueResults.length} sonuç bulundu.</strong></div>`;
+          
+          uniqueResults.forEach(result => {
+            // Kelimeyi vurgula (Highlight)
+            const regex = new RegExp(`(${keyword})`, "gi");
+            const highlightedResult = result.replace(regex, '<mark>$1</mark>');
+
+            const div = document.createElement('div');
+            div.className = 'result-item';
+            div.innerHTML = `
+              <h3>Bulunan Eşleşme:</h3>
+              <div class="result-snippet">... ${highlightedResult} ...</div>
+            `;
+            resultsArea.appendChild(div);
+          });
+        } else {
+          resultsArea.innerHTML = `<div class="status-msg" style="color:var(--pink);">"${keyword}" kelimesini bu sayfada bulamadım. Farklı bir URL veya kelime dene.</div>`;
+        }
+
+      } catch (error) {
+        resultsArea.innerHTML = `<div class="status-msg" style="color:red;">Bağlantı hatası: Siteye ulaşılamadı. (Bazı siteler botları engeller veya Proxy çökmüş olabilir.)</div>`;
+        console.error(error);
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.innerText = "Ara ve Bul";
+      }
+    }
+  </script>
+
+</body>
+</html>
